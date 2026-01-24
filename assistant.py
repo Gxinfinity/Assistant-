@@ -7,6 +7,7 @@ from pyrogram import Client, filters
 from pytgcalls import PyTgCalls
 from pytgcalls.types import AudioPiped
 from pytgcalls.types.stream import StreamAudioEnded
+
 import google.generativeai as genai
 from edge_tts import Communicate
 
@@ -48,7 +49,6 @@ calls = PyTgCalls(app)
 # ================= UTILS =================
 
 async def ai_reply_to_voice(text: str):
-    """Generate AI response + TTS"""
     response = await asyncio.to_thread(model.generate_content, text)
     ai_text = response.text.strip()
 
@@ -60,7 +60,6 @@ async def ai_reply_to_voice(text: str):
 
 
 def speech_to_text(input_file: str):
-    """Convert voice to text"""
     wav = "temp.wav"
     AudioSegment.from_file(input_file).export(wav, format="wav")
 
@@ -76,19 +75,14 @@ def speech_to_text(input_file: str):
             os.remove(wav)
 
 
-def yt_stream_url(query: str, video=False):
-    """Get YouTube stream URL safely"""
-    format_code = "best[height<=720]" if video else "bestaudio"
-
+def yt_stream_url(query: str):
     cmd = [
         "yt-dlp",
-        "-f", format_code,
+        "-f", "bestaudio",
         "--get-url",
         f"ytsearch:{query}",
     ]
-
-    result = subprocess.check_output(cmd, text=True).splitlines()
-    return result[0]
+    return subprocess.check_output(cmd, text=True).splitlines()[0]
 
 
 # ================= FEATURES =================
@@ -116,9 +110,9 @@ async def voice_ai_handler(_, message):
         text = speech_to_text(voice_path)
 
         if not text:
-            return await status.edit("❌ Awaz clear nahi thi bhai")
+            return await status.edit("❌ Awaz clear nahi thi")
 
-        await status.edit(f"📝 Tumne bola:\n`{text}`\n\n🤔 Soch raha hoon...")
+        await status.edit(f"📝 Tumne bola:\n{text}\n\n🤔 Soch raha hoon...")
 
         audio, reply = await ai_reply_to_voice(text)
 
@@ -127,10 +121,10 @@ async def voice_ai_handler(_, message):
             AudioPiped(audio),
         )
 
-        await status.edit(f"🎙️ **AI Reply:**\n{reply}")
+        await status.edit(f"🎙️ AI Reply:\n{reply}")
 
     except Exception as e:
-        await status.edit(f"❌ Error:\n`{e}`")
+        await status.edit(f"❌ Error:\n{e}")
 
     finally:
         is_busy = False
@@ -145,26 +139,10 @@ async def play_music(_, message):
         return await message.edit("🎵 Gane ka naam likh bhai")
 
     query = message.text.split(None, 1)[1]
-    await message.edit(f"🎵 Play kar raha hoon:\n`{query}`")
+    await message.edit(f"🎵 Play kar raha hoon:\n{query}")
 
     url = yt_stream_url(query)
     await calls.play(TARGET_CHAT, AudioPiped(url))
-
-
-@app.on_message(filters.command("vplay", ".") & filters.me)
-async def play_video(_, message):
-    if len(message.command) < 2:
-        return await message.edit("🎬 Video ka naam toh do")
-
-    query = message.text.split(None, 1)[1]
-    await message.edit(f"🎬 Video play ho raha hai:\n`{query}`")
-
-    url = yt_stream_url(query, video=True)
-
-    await calls.play(
-        TARGET_CHAT,
-        AudioVideoPiped(url, url),
-    )
 
 
 # ================= RUN =================
@@ -174,19 +152,8 @@ async def main():
     await calls.start()
 
     print("🚀 AI Voice + Music Assistant LIVE")
-
-    try:
-        await calls.join_group_call(
-            TARGET_CHAT,
-            AudioPiped(
-                "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
-            ),
-        )
-    except Exception:
-        pass
-
     await asyncio.Event().wait()
 
 
-if __name__ == "__main__":
+if name == "main":
     asyncio.run(main())
