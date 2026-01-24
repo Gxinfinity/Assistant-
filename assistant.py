@@ -5,8 +5,8 @@ import subprocess
 
 from pyrogram import Client, filters
 from pytgcalls import PyTgCalls
-from pytgcalls.types.input_stream import AudioPiped, AudioVideoPiped
-
+from pytgcalls.types.input_stream import AudioPiped
+from pytgcalls.types.stream import StreamAudioEnded
 import google.generativeai as genai
 from edge_tts import Communicate
 
