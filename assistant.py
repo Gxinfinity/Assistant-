@@ -1,137 +1,192 @@
 import asyncio
 import os
 import time
+import subprocess
+
 from pyrogram import Client, filters
+from pytgcalls import PyTgCalls
+from pytgcalls.types.input_stream import AudioPiped, AudioVideoPiped
 
-# --- UNIVERSAL PYTGCALLS IMPORT FIX ---
-try:
-    from pytgcalls import PyTgCalls
-except ImportError:
-    try:
-        from pytgcalls.pytgcalls import PyTgCalls
-    except ImportError:
-        from pytgcalls.client import PyTgCalls
-
-from pytgcalls.types import AudioPiped, VideoPiped
 import google.generativeai as genai
 from edge_tts import Communicate
+
 import speech_recognition as sr
 from pydub import AudioSegment
 
-# --- CONFIGURATION (Bhai yahan details sahi se bharna) ---
-API_ID = 26537336 
+# ================= CONFIG =================
+
+API_ID = 26537336
 API_HASH = "931051ff310e587ac41154ed3d516f06"
-STRING_SESSION = "" # <--- Khali mat chhodna
-GEMINI_KEY = ""   # <--- Khali mat chhodna
-TARGET_CHAT = -1003228624224 
+STRING_SESSION = ""          # REQUIRED
+GEMINI_KEY = ""              # REQUIRED
+TARGET_CHAT = -1003228624224
 
-# Anti-Spam & Status
-user_cooldowns = {}
 COOLDOWN_TIME = 10
-is_busy = False 
 
-# AI Setup
+# ================= STATE =================
+
+user_cooldowns = {}
+is_busy = False
+
+# ================= AI SETUP =================
+
 genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel('gemini-pro')
+model = genai.GenerativeModel("gemini-pro")
 recognizer = sr.Recognizer()
 
-app = Client("MyAssistant", api_id=API_ID, api_hash=API_HASH, session_string=STRING_SESSION)
-call_py = PyTgCalls(app)
+# ================= CLIENTS =================
 
-# --- UTILS ---
+app = Client(
+    name="MyAssistant",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    session_string=STRING_SESSION,
+)
 
-async def get_ai_response(text):
-    response = model.generate_content(text)
-    ai_text = response.text
-    path = "ai_reply.mp3"
-    communicate = Communicate(ai_text, "hi-IN-MadhurNeural")
-    await communicate.save(path)
-    return path, ai_text
+calls = PyTgCalls(app)
 
-def transcribe_audio(file_path):
-    w_path = "temp.wav"
-    # Audio convert process
-    audio = AudioSegment.from_file(file_path)
-    audio.export(w_path, format="wav")
-    with sr.AudioFile(w_path) as source:
-        data = recognizer.record(source)
-        try:
-            return recognizer.recognize_google(data, language="hi-IN")
-        except:
-            return None
+# ================= UTILS =================
 
-# --- FEATURES ---
+async def ai_reply_to_voice(text: str):
+    """Generate AI response + TTS"""
+    response = await asyncio.to_thread(model.generate_content, text)
+    ai_text = response.text.strip()
 
-# 1. Voice Recognition & AI Reply
+    output = "ai_reply.mp3"
+    tts = Communicate(ai_text, voice="hi-IN-MadhurNeural")
+    await tts.save(output)
+
+    return output, ai_text
+
+
+def speech_to_text(input_file: str):
+    """Convert voice to text"""
+    wav = "temp.wav"
+    AudioSegment.from_file(input_file).export(wav, format="wav")
+
+    with sr.AudioFile(wav) as source:
+        audio = recognizer.record(source)
+
+    try:
+        return recognizer.recognize_google(audio, language="hi-IN")
+    except Exception:
+        return None
+    finally:
+        if os.path.exists(wav):
+            os.remove(wav)
+
+
+def yt_stream_url(query: str, video=False):
+    """Get YouTube stream URL safely"""
+    format_code = "best[height<=720]" if video else "bestaudio"
+
+    cmd = [
+        "yt-dlp",
+        "-f", format_code,
+        "--get-url",
+        f"ytsearch:{query}",
+    ]
+
+    result = subprocess.check_output(cmd, text=True).splitlines()
+    return result[0]
+
+
+# ================= FEATURES =================
+
 @app.on_message(filters.voice & filters.chat(TARGET_CHAT))
-async def handle_voice(client, message):
+async def voice_ai_handler(_, message):
     global is_busy
-    uid = message.from_user.id
-    current_time = time.time()
 
-    if is_busy or (uid in user_cooldowns and current_time - user_cooldowns[uid] < COOLDOWN_TIME):
+    uid = message.from_user.id
+    now = time.time()
+
+    if is_busy:
+        return
+
+    if uid in user_cooldowns and now - user_cooldowns[uid] < COOLDOWN_TIME:
         return
 
     is_busy = True
-    user_cooldowns[uid] = current_time
-    msg = await message.reply("👂 Sun raha hoon...")
+    user_cooldowns[uid] = now
+
+    status = await message.reply("👂 Sun raha hoon...")
 
     try:
-        file_path = await message.download()
-        text = transcribe_audio(file_path)
-        if text:
-            await msg.edit(f"📝 Tune kaha: `{text}`\n🤔 Soch raha hoon...")
-            audio_path, ai_text = await get_ai_response(text)
-            await call_py.play(TARGET_CHAT, AudioPiped(audio_path))
-            await msg.edit(f"🎙️ **AI:** {ai_text}")
-        else:
-            await msg.edit("Awaz nahi aayi bahi!")
-        
-        if os.path.exists(file_path): os.remove(file_path)
-        if os.path.exists("temp.wav"): os.remove("temp.wav")
-    except Exception as e: 
-        print(f"Error: {e}")
-        await msg.edit(f"❌ Error: {e}")
-    finally: 
+        voice_path = await message.download()
+        text = speech_to_text(voice_path)
+
+        if not text:
+            return await status.edit("❌ Awaz clear nahi thi bhai")
+
+        await status.edit(f"📝 Tumne bola:\n`{text}`\n\n🤔 Soch raha hoon...")
+
+        audio, reply = await ai_reply_to_voice(text)
+
+        await calls.play(
+            TARGET_CHAT,
+            AudioPiped(audio),
+        )
+
+        await status.edit(f"🎙️ **AI Reply:**\n{reply}")
+
+    except Exception as e:
+        await status.edit(f"❌ Error:\n`{e}`")
+
+    finally:
         is_busy = False
+        for f in ("ai_reply.mp3", voice_path):
+            if f and os.path.exists(f):
+                os.remove(f)
 
-# 2. Video Playback Command (.vplay [song name])
-@app.on_message(filters.command("vplay", ".") & filters.me)
-async def vplay_cmd(client, message):
-    if len(message.command) < 2:
-        return await message.edit("Gane ka naam toh de!")
 
-    query = message.text.split(None, 1)[1]
-    await message.edit(f"🎬 Video play kar raha hoon: `{query}`")
-
-    os.system(f'yt-dlp -f "best[height<=720]" --get-url "ytsearch:{query}" > vlink.txt')
-    with open("vlink.txt", "r") as f:
-        links = f.readlines()
-        v_url = links[0].strip()
-
-    await call_py.play(TARGET_CHAT, AudioPiped(v_url), VideoPiped(v_url))
-
-# 3. Normal Music Play (.play [song name])
 @app.on_message(filters.command("play", ".") & filters.me)
-async def play_cmd(client, message):
-    if len(message.command) < 2: return
-    query = message.text.split(None, 1)[1]
-    await message.edit(f"🎵 Gana baja raha hoon: `{query}`")
-    os.system(f'yt-dlp -f "bestaudio" --get-url "ytsearch:{query}" > alink.txt')
-    with open("alink.txt", "r") as f:
-        a_url = f.read().strip()
-    await call_py.play(TARGET_CHAT, AudioPiped(a_url))
+async def play_music(_, message):
+    if len(message.command) < 2:
+        return await message.edit("🎵 Gane ka naam likh bhai")
 
-# --- RUN ---
+    query = message.text.split(None, 1)[1]
+    await message.edit(f"🎵 Play kar raha hoon:\n`{query}`")
+
+    url = yt_stream_url(query)
+    await calls.play(TARGET_CHAT, AudioPiped(url))
+
+
+@app.on_message(filters.command("vplay", ".") & filters.me)
+async def play_video(_, message):
+    if len(message.command) < 2:
+        return await message.edit("🎬 Video ka naam toh do")
+
+    query = message.text.split(None, 1)[1]
+    await message.edit(f"🎬 Video play ho raha hai:\n`{query}`")
+
+    url = yt_stream_url(query, video=True)
+
+    await calls.play(
+        TARGET_CHAT,
+        AudioVideoPiped(url, url),
+    )
+
+
+# ================= RUN =================
+
 async def main():
     await app.start()
-    await call_py.start()
-    print("🚀 All-in-One Video AI Assistant is LIVE!")
+    await calls.start()
+
+    print("🚀 AI Voice + Music Assistant LIVE")
+
     try:
-        # Initial Join sound
-        await call_py.join_group_call(TARGET_CHAT, AudioPiped("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"))
-    except: pass
+        await calls.join_group_call(
+            TARGET_CHAT,
+            AudioPiped(
+                "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
+            ),
+        )
+    except Exception:
+        pass
+
     await asyncio.Event().wait()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
