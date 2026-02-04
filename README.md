@@ -20,20 +20,3 @@ export TARGET_CHAT="-1001234567890"
 ```bash
 python assistant.py
 ```
-
-## Heroku Deploy
-
-This repository is Heroku-ready with a worker dyno.
-
-1. Create a Heroku app and add the required config vars:
-   - `API_ID`
-   - `API_HASH`
-   - `STRING_SESSION`
-   - `GEMINI_KEY`
-   - `TARGET_CHAT`
-2. Deploy the repo to Heroku.
-3. Scale the worker dyno:
-
-```bash
-heroku ps:scale worker=1
-```
