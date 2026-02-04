@@ -2,11 +2,11 @@ import asyncio
 import os
 import time
 import subprocess
+import uuid
 
 from pyrogram import Client, filters
 from pytgcalls import PyTgCalls
 from pytgcalls.types import AudioPiped
-from pytgcalls.types.stream import StreamAudioEnded
 
 import google.generativeai as genai
 from edge_tts import Communicate
@@ -16,11 +16,11 @@ from pydub import AudioSegment
 
 # ================= CONFIG =================
 
-API_ID = 26537336
-API_HASH = "931051ff310e587ac41154ed3d516f06"
-STRING_SESSION = ""          # REQUIRED
-GEMINI_KEY = ""              # REQUIRED
-TARGET_CHAT = -1003228624224
+API_ID = int(os.environ.get("API_ID", "0"))
+API_HASH = os.environ.get("API_HASH", "")
+STRING_SESSION = os.environ.get("STRING_SESSION", "")
+GEMINI_KEY = os.environ.get("GEMINI_KEY", "")
+TARGET_CHAT = int(os.environ.get("TARGET_CHAT", "0"))
 
 COOLDOWN_TIME = 10
 
@@ -31,8 +31,7 @@ is_busy = False
 
 # ================= AI SETUP =================
 
-genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel("gemini-pro")
+model = None
 recognizer = sr.Recognizer()
 
 # ================= CLIENTS =================
@@ -48,11 +47,20 @@ calls = PyTgCalls(app)
 
 # ================= UTILS =================
 
+def init_ai():
+    global model
+    genai.configure(api_key=GEMINI_KEY)
+    # Free-tier friendly model.
+    model = genai.GenerativeModel("gemini-1.5-flash")
+
+
 async def ai_reply_to_voice(text: str):
+    if model is None:
+        raise RuntimeError("AI model not initialized.")
     response = await asyncio.to_thread(model.generate_content, text)
     ai_text = response.text.strip()
 
-    output = "ai_reply.mp3"
+    output = f"ai_reply_{uuid.uuid4().hex}.mp3"
     tts = Communicate(ai_text, voice="hi-IN-MadhurNeural")
     await tts.save(output)
 
@@ -60,7 +68,7 @@ async def ai_reply_to_voice(text: str):
 
 
 def speech_to_text(input_file: str):
-    wav = "temp.wav"
+    wav = f"temp_{uuid.uuid4().hex}.wav"
     AudioSegment.from_file(input_file).export(wav, format="wav")
 
     with sr.AudioFile(wav) as source:
@@ -82,7 +90,25 @@ def yt_stream_url(query: str):
         "--get-url",
         f"ytsearch:{query}",
     ]
-    return subprocess.check_output(cmd, text=True).splitlines()[0]
+    output = subprocess.check_output(cmd, text=True).splitlines()
+    if not output:
+        raise subprocess.CalledProcessError(1, cmd, "No URL returned by yt-dlp.")
+    return output[0]
+
+
+def missing_config():
+    missing = []
+    if not API_ID:
+        missing.append("API_ID")
+    if not API_HASH:
+        missing.append("API_HASH")
+    if not STRING_SESSION:
+        missing.append("STRING_SESSION")
+    if not GEMINI_KEY:
+        missing.append("GEMINI_KEY")
+    if not TARGET_CHAT:
+        missing.append("TARGET_CHAT")
+    return missing
 
 
 # ================= FEATURES =================
@@ -93,6 +119,9 @@ async def voice_ai_handler(_, message):
 
     uid = message.from_user.id
     now = time.time()
+
+    if missing_config():
+        return await message.reply("⚠️ Missing configuration. Check environment variables.")
 
     if is_busy:
         return
@@ -105,6 +134,8 @@ async def voice_ai_handler(_, message):
 
     status = await message.reply("👂 Sun raha hoon...")
 
+    voice_path = None
+    audio = None
     try:
         voice_path = await message.download()
         text = speech_to_text(voice_path)
@@ -128,7 +159,7 @@ async def voice_ai_handler(_, message):
 
     finally:
         is_busy = False
-        for f in ("ai_reply.mp3", voice_path):
+        for f in (voice_path, audio):
             if f and os.path.exists(f):
                 os.remove(f)
 
@@ -141,13 +172,26 @@ async def play_music(_, message):
     query = message.text.split(None, 1)[1]
     await message.edit(f"🎵 Play kar raha hoon:\n{query}")
 
-    url = yt_stream_url(query)
+    if missing_config():
+        return await message.edit("⚠️ Missing configuration. Check environment variables.")
+
+    try:
+        url = yt_stream_url(query)
+    except subprocess.CalledProcessError as exc:
+        return await message.edit(f"❌ yt-dlp error:\n{exc}")
     await calls.play(TARGET_CHAT, AudioPiped(url))
 
 
 # ================= RUN =================
 
 async def main():
+    missing = missing_config()
+    if missing:
+        missing_list = ", ".join(missing)
+        raise SystemExit(f"Missing configuration: {missing_list}")
+
+    init_ai()
+
     await app.start()
     await calls.start()
 
@@ -155,5 +199,5 @@ async def main():
     await asyncio.Event().wait()
 
 
-if name == "main":
+if __name__ == "__main__":
     asyncio.run(main())
