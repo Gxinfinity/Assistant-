@@ -1,0 +1,40 @@
+{
+  "name": "telegram-voice-assistant",
+  "description": "Telegram voice assistant using Pyrogram, PyTgCalls, and Gemini.",
+  "keywords": [
+    "telegram",
+    "pyrogram",
+    "pytgcalls",
+    "gemini",
+    "voice"
+  ],
+  "stack": "heroku-22",
+  "formation": {
+    "worker": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  },
+  "env": {
+    "API_ID": {
+      "description": "Telegram API ID",
+      "required": true
+    },
+    "API_HASH": {
+      "description": "Telegram API hash",
+      "required": true
+    },
+    "STRING_SESSION": {
+      "description": "Pyrogram string session",
+      "required": true
+    },
+    "GEMINI_KEY": {
+      "description": "Google Gemini API key",
+      "required": true
+    },
+    "TARGET_CHAT": {
+      "description": "Target chat ID",
+      "required": true
+    }
+  }
+}

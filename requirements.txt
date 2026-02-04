@@ -1,0 +1,8 @@
+pyrogram
+pytgcalls
+google-generativeai
+edge-tts
+SpeechRecognition
+pydub
+tgcrypto
+yt-dlp
